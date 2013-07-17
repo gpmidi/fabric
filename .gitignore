@@ -16,3 +16,11 @@ TAGS
 .tox
 tox.ini
 .idea/
+
+# Eclipse/PyDev project files
+.project
+.pydevproject
+.settings
+
+# Don't need VIM's swap files
+.*.swp
