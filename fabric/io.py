@@ -173,7 +173,7 @@ class OutputLooper(object):
                 for action,prompt in env.prompt_responses.items():
                     res = prompt.check(full = full, recent = recent)
                     if res:
-                        action.onMatchF(checkResult = res, prompt = prompt, mgr = action)
+                        action.onMatchF(checkResult = res, prompt = prompt, mgr = action, chan = self.chan)
 
         # Print trailing new line if the last thing we printed was our line
         # prefix.
