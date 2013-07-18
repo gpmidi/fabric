@@ -103,3 +103,26 @@ class PromptContextManager(object):
             del env.prompt_responses[self]
         else:
             pass
+
+
+class SimpleSendPrompt(PromptContextManager):
+    """ Accepts a regex or PromptChecker object and a string that will
+    be sent to the remote system the first time the given string
+    is seen """
+    def __init__(self, prompt, toSend, includeNewLine=True):
+        if isinstance(prompt, PromptChecker):
+            pass
+        elif isinstance(prompt, str) or hasattr(prompt, 'match'):
+            prompt = RegexFindAllPromptChecker(matchRE=prompt)
+        else:
+            raise TypeError("Unknown prompt object type %r" % prompt)
+        PromptContextManager.__init__(self, onMatchF=self.onMatch, prompt=prompt)
+        self.prompt = prompt
+        self.toSend = toSend
+        self.includeNewLine = includeNewLine
+
+    def onMatch(self, checkResult, prompt, mgr, chan, *args, **kw):
+        chan.sendall(self.toSend)
+        if self.includeNewLine:
+            chan.sendall('\n')
+
