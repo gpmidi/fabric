@@ -156,6 +156,15 @@ class OutputLooper(object):
                     elif try_again:
                         self.try_again()
 
+                # Check custom prompts
+                recent=self.capture[-1]
+                # FIXME: Use the real data
+                full='\n'.join(self.capture)
+                for action,prompt in env.prompt_responses.items():
+                    res = prompt.check(full = full, recent = recent)
+                    if res:
+                        action.onMatchF(checkResult = res, prompt = prompt, mgr = action)
+
         # Print trailing new line if the last thing we printed was our line
         # prefix.
         if self.prefix and "".join(self.write_buffer) == self.prefix:
