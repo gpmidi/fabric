@@ -169,11 +169,16 @@ class OutputLooper(object):
                 # Check custom prompts
                 recent=self.capture[-1]
                 # FIXME: Use the real data
-                full='\n'.join(self.capture)
+                full = ''.join(self.capture)
                 for action,prompt in env.prompt_responses.items():
                     res = prompt.check(full = full, recent = recent)
                     if res:
-                        action.onMatchF(checkResult = res, prompt = prompt, mgr = action, chan = self.chan)
+                        action.onMatchF(
+                                        checkResult = res,
+                                        prompt = prompt,
+                                        mgr = action,
+                                        chan = self.chan,
+                                        )
 
         # Print trailing new line if the last thing we printed was our line
         # prefix.
