@@ -27,7 +27,7 @@ def current_version_is_tagged():
 
 def current_version_is_changelogged(filename):
     return _seek_version(
-        'egrep "^\* :release:`%s " filename',
+        'egrep "^\* :release:\`%%s " %s' % filename,
         "Looking for changelog entry"
     )
 
@@ -102,6 +102,7 @@ def tag(force='no', push='no'):
                 reload(fabric.version)
                 local("git add %s" % " ".join(changed))
                 local("git commit -m \"Cut %s\"" % _version('verbose'))
+                local("git push")
 
         # At this point, we've incremented the in-code version and just need to
         # tag it in Git.

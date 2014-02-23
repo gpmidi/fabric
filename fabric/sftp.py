@@ -106,7 +106,7 @@ class SFTP(object):
         from fabric.api import sudo, hide
         if use_sudo:
             with hide('everything'):
-                sudo('mkdir %s' % path)
+                sudo('mkdir "%s"' % path)
         else:
             self.ftp.mkdir(path)
 
@@ -196,7 +196,7 @@ class SFTP(object):
         return result
 
     def put(self, local_path, remote_path, use_sudo, mirror_local_mode, mode,
-        local_is_path):
+        local_is_path, temp_dir):
         from fabric.api import sudo, hide
         pre = self.ftp.getcwd()
         pre = pre if pre else ''
@@ -217,7 +217,7 @@ class SFTP(object):
             hasher = hashlib.sha1()
             hasher.update(env.host_string)
             hasher.update(target_path)
-            remote_path = hasher.hexdigest()
+            remote_path = posixpath.join(temp_dir, hasher.hexdigest())
         # Read, ensuring we handle file-like objects correct re: seek pointer
         putter = self.ftp.put
         if not local_is_path:
@@ -240,7 +240,10 @@ class SFTP(object):
                 rmode = (rmode & 07777)
             if lmode != rmode:
                 if use_sudo:
-                    with hide('everything'):
+                    # Temporarily nuke 'cwd' so sudo() doesn't "cd" its mv
+                    # command. (The target path has already been cwd-ified
+                    # elsewhere.)
+                    with settings(hide('everything'), cwd=""):
                         sudo('chmod %o \"%s\"' % (lmode, remote_path))
                 else:
                     self.ftp.chmod(remote_path, lmode)
@@ -254,7 +257,7 @@ class SFTP(object):
         return remote_path
 
     def put_dir(self, local_path, remote_path, use_sudo, mirror_local_mode,
-        mode):
+        mode, temp_dir):
         if os.path.basename(local_path):
             strip = os.path.dirname(local_path)
         else:
@@ -281,6 +284,6 @@ class SFTP(object):
                 local_path = os.path.join(context, f)
                 n = posixpath.join(rcontext, f)
                 p = self.put(local_path, n, use_sudo, mirror_local_mode, mode,
-                    True)
+                    True, temp_dir)
                 remote_paths.append(p)
         return remote_paths

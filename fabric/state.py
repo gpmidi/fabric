@@ -111,6 +111,12 @@ env_options = [
         help="specify location of config file to use"
     ),
 
+    make_option('--colorize-errors',
+        action='store_true',
+        default=False,
+        help="Color error output",
+    ),
+
     make_option('-D', '--disable-known-hosts',
         action='store_true',
         default=False,
@@ -297,9 +303,11 @@ env_options = [
 # preserving DRY: anything in here is generally not settable via the command
 # line.
 env = _AttributeDict({
+    'abort_exception': None,
     'again_prompt': 'Sorry, try again.',
     'all_hosts': [],
     'combine_stderr': True,
+    'colorize_errors': False,
     'command': None,
     'command_prefixes': [],
     'cwd': '',  # Must be empty string, not None, for concatenation purposes

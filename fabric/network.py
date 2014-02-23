@@ -11,6 +11,8 @@ import re
 import time
 import socket
 import sys
+from StringIO import StringIO
+
 
 from fabric.auth import get_password, set_password
 from fabric.utils import abort, handle_prompt_abort, warn
@@ -40,6 +42,62 @@ def direct_tcpip(client, host, port):
         (host, int(port)),
         ('', 0)
     )
+
+
+def is_key_load_error(e):
+    return (
+        e.__class__ is ssh.SSHException
+        and 'Unable to parse key file' in str(e)
+    )
+
+
+def _tried_enough(tries):
+    from fabric.state import env
+    return tries >= env.connection_attempts
+
+
+def get_gateway(host, port, cache, replace=False):
+    """
+    Create and return a gateway socket, if one is needed.
+
+    This function checks ``env`` for gateway or proxy-command settings and
+    returns the necessary socket-like object for use by a final host
+    connection.
+
+    :param host:
+        Hostname of target server.
+
+    :param port:
+        Port to connect to on target server.
+
+    :param cache:
+        A ``HostConnectionCache`` object, in which gateway ``SSHClient``
+        objects are to be retrieved/cached.
+
+    :param replace:
+        Whether to forcibly replace a cached gateway client object.
+
+    :returns:
+        A ``socket.socket``-like object, or ``None`` if none was created.
+    """
+    from fabric.state import env, output
+    sock = None
+    proxy_command = ssh_config().get('proxycommand', None)
+    if env.gateway:
+        gateway = normalize_to_string(env.gateway)
+        # ensure initial gateway connection
+        if replace or gateway not in cache:
+            if output.debug:
+                print "Creating new gateway connection to %r" % gateway
+            cache[gateway] = connect(*normalize(gateway) + (cache, False))
+        # now we should have an open gw connection and can ask it for a
+        # direct-tcpip channel to the real target. (bypass cache's own
+        # __getitem__ override to avoid hilarity - this is usually called
+        # within that method.)
+        sock = direct_tcpip(dict.__getitem__(cache, gateway), host, port)
+    elif proxy_command:
+        sock = ssh.ProxyCommand(proxy_command)
+    return sock
 
 
 class HostConnectionCache(dict):
@@ -80,25 +138,9 @@ class HostConnectionCache(dict):
         """
         Force a new connection to ``key`` host string.
         """
-        from fabric.state import env, output
         user, host, port = normalize(key)
         key = normalize_to_string(key)
-        sock = None
-        proxy_command = ssh_config().get('proxycommand', None)
-        if env.gateway:
-            gateway = normalize_to_string(env.gateway)
-            # Ensure initial gateway connection
-            if gateway not in self:
-                if output.debug:
-                    print "Creating new gateway connection to %r" % gateway
-                self[gateway] = connect(*normalize(gateway))
-            # Now we should have an open gw connection and can ask it for a
-            # direct-tcpip channel to the real target. (Bypass our own
-            # __getitem__ override to avoid hilarity.)
-            sock = direct_tcpip(dict.__getitem__(self, gateway), host, port)
-        elif proxy_command:
-            sock = ssh.ProxyCommand(proxy_command)
-        self[key] = connect(user, host, port, sock)
+        self[key] = connect(user, host, port, cache=self)
 
     def __getitem__(self, key):
         """
@@ -174,6 +216,34 @@ def key_filenames():
         # Assume a list here as we require Paramiko 1.10+
         keys.extend(conf['identityfile'])
     return map(os.path.expanduser, keys)
+
+
+def key_from_env(passphrase=None):
+    """
+    Returns a paramiko-ready key from a text string of a private key
+    """
+    from fabric.state import env, output
+
+    if 'key' in env:
+        if output.debug:
+            # NOTE: this may not be the most secure thing; OTOH anybody running
+            # the process must by definition have access to the key value,
+            # so only serious problem is if they're logging the output.
+            sys.stderr.write("Trying to honor in-memory key %r\n" % env.key)
+        for pkey_class in (ssh.rsakey.RSAKey, ssh.dsskey.DSSKey):
+            if output.debug:
+                sys.stderr.write("Trying to load it as %s\n" % pkey_class)
+            try:
+                return pkey_class.from_private_key(StringIO(env.key), passphrase)
+            except Exception, e:
+                # File is valid key, but is encrypted: raise it, this will
+                # cause cxn loop to prompt for passphrase & retry
+                if 'Private key file is encrypted' in e:
+                    raise
+                # Otherwise, it probably means it wasn't a valid key of this
+                # type, so try the next one.
+                else:
+                    pass
 
 
 def parse_host_string(host_string):
@@ -300,12 +370,23 @@ def normalize_to_string(host_string):
     return join_host_strings(*normalize(host_string))
 
 
-def connect(user, host, port, sock=None):
+def connect(user, host, port, cache, seek_gateway=True):
     """
     Create and return a new SSHClient instance connected to given host.
 
-    If ``sock`` is given, it's passed into ``SSHClient.connect()`` directly.
-    Used for gateway connections by e.g. ``HostConnectionCache``.
+    :param user: Username to connect as.
+
+    :param host: Network hostname.
+
+    :param port: SSH daemon port.
+
+    :param cache:
+        A ``HostConnectionCache`` instance used to cache/store gateway hosts
+        when gatewaying is enabled.
+
+    :param seek_gateway:
+        Whether to try setting up a gateway socket for this connection. Used so
+        the actual gateway connection can prevent recursion.
     """
     from state import env, output
 
@@ -334,19 +415,28 @@ def connect(user, host, port, sock=None):
 
     # Initialize loop variables
     connected = False
-    password = get_password()
+    password = get_password(user, host, port)
     tries = 0
+    sock = None
 
     # Loop until successful connect (keep prompting for new password)
     while not connected:
         # Attempt connection
         try:
             tries += 1
+
+            # (Re)connect gateway socket, if needed.
+            # Nuke cached client object if not on initial try.
+            if seek_gateway:
+                sock = get_gateway(host, port, cache, replace=tries > 0)
+
+            # Ready to connect
             client.connect(
                 hostname=host,
                 port=int(port),
                 username=user,
                 password=password,
+                pkey=key_from_env(password),
                 key_filename=key_filenames(),
                 timeout=env.timeout,
                 allow_agent=not env.no_agent,
@@ -372,18 +462,31 @@ def connect(user, host, port, sock=None):
             ssh.SSHException
         ), e:
             msg = str(e)
+            # If we get SSHExceptionError and the exception message indicates
+            # SSH protocol banner read failures, assume it's caused by the
+            # server load and try again.
+            if e.__class__ is ssh.SSHException \
+                and msg == 'Error reading SSH protocol banner':
+                if _tried_enough(tries):
+                    raise NetworkError(msg, e)
+                continue
+
             # For whatever reason, empty password + no ssh key or agent
             # results in an SSHException instead of an
             # AuthenticationException. Since it's difficult to do
             # otherwise, we must assume empty password + SSHException ==
-            # auth exception. Conversely: if we get SSHException and there
+            # auth exception.
+            #
+            # Conversely: if we get SSHException and there
             # *was* a password -- it is probably something non auth
-            # related, and should be sent upwards.
+            # related, and should be sent upwards. (This is not true if the
+            # exception message does indicate key parse problems.)
             #
             # This also holds true for rejected/unknown host keys: we have to
             # guess based on other heuristics.
             if e.__class__ is ssh.SSHException \
-                and (password or msg.startswith('Unknown server')):
+                and (password or msg.startswith('Unknown server')) \
+                and not is_key_load_error(e):
                 raise NetworkError(msg, e)
 
             # Otherwise, assume an auth exception, and prompt for new/better
@@ -409,7 +512,8 @@ def connect(user, host, port, sock=None):
             # * In this condition (trying a key file, password is None)
             # ssh raises PasswordRequiredException.
             text = None
-            if e.__class__ is ssh.PasswordRequiredException:
+            if e.__class__ is ssh.PasswordRequiredException \
+                or is_key_load_error(e):
                 # NOTE: we can't easily say WHICH key's passphrase is needed,
                 # because ssh doesn't provide us with that info, and
                 # env.key_filename may be a list of keys, so we can't know
@@ -418,7 +522,7 @@ def connect(user, host, port, sock=None):
                 text = prompt % env.host_string
             password = prompt_for_password(text)
             # Update env.password, env.passwords if empty
-            set_password(password)
+            set_password(user, host, port, password)
         # Ctrl-D / Ctrl-C for exit
         except (EOFError, TypeError):
             # Print a newline (in case user was sitting at prompt)
@@ -431,7 +535,7 @@ def connect(user, host, port, sock=None):
         # NOTE: In 2.6, socket.error subclasses IOError
         except socket.error, e:
             not_timeout = type(e) is not socket.timeout
-            giving_up = tries >= env.connection_attempts
+            giving_up = _tried_enough(tries)
             # Baseline error msg for when debug is off
             msg = "Timed out trying to connect to %s" % host
             # Expanded for debug on

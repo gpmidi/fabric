@@ -1,6 +1,5 @@
 language: python
 python:
-  - "2.5"
   - "2.6"
   - "2.7"
 install:
@@ -8,23 +7,27 @@ install:
   - pip install -r requirements.txt --use-mirrors
   # Get fab to test fab
   - pip install -e .
-  # Install third-party multiprocessing on 2.5
-  - "if [[ $TRAVIS_PYTHON_VERSION == '2.5' ]]; then pip install multiprocessing; fi"
   # Deal with issue on Travis builders re: multiprocessing.Queue :(
   - "sudo rm -rf /dev/shm && sudo ln -s /run/shm /dev/shm"
+  # Jinja2 for some tests, in a version that isn't broken on 2.5 :(
+  - 'pip install "jinja2<2.7"'
 before_script:
   # Allow us to SSH passwordless to localhost
   - ssh-keygen -f ~/.ssh/id_rsa -N ""
   - cp ~/.ssh/{id_rsa.pub,authorized_keys}
-  - "netstat -tan | grep LISTEN"
 script:
   # Normal tests
   - fab test
   # Integration tests
-  - fab test:"--tests\=integration"
+  - fab -H localhost test:"--tests\=integration"
+  # Make sure the docs build
+  - fab docs
 notifications:
   irc:
     channels: "irc.freenode.org#fabric"
+    template:
+      - "%{repository}@%{branch}: %{message} (%{build_url})"
     on_success: change
     on_failure: change
+    use_notice: true
   email: false
