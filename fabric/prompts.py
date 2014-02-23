@@ -1,8 +1,5 @@
-''' React to prompts and other data
-Created on Jul 17, 2013
-
-@author: Paulson McIntyre <pmcintyre@salesforce.com>
-'''
+""" React to prompts and other data interactively instead of simple run+return
+"""
 from __future__ import with_statement
 
 from fabric.api import env, run
@@ -16,6 +13,7 @@ class PromptChecker(object):
     """
 
     def __init__(self, checkFunc=lambda s: False, checkFuncKW={}, useRecent=False):
+        # A tad redundant in most cases; allow for non-class-based overrides
         self.checkFunc = checkFunc
         self.useRecent = useRecent
         self.checkFuncKW = checkFuncKW
@@ -34,7 +32,6 @@ class ExactPromptChecker(PromptChecker):
     def __init__(self, matchStr, useRecent=False):
         PromptChecker.__init__(
                                self,
-                               checkFunc=self.checkFunc,
                                useRecent=useRecent,
                                )
         self.matchStr = matchStr
@@ -52,7 +49,6 @@ class ExactEndsWithPromptChecker(PromptChecker):
     def __init__(self, matchStr, useRecent=False):
         PromptChecker.__init__(
                                self,
-                               checkFunc=self.checkFunc,
                                useRecent=useRecent,
                                )
         self.matchStr = matchStr
@@ -62,11 +58,32 @@ class ExactEndsWithPromptChecker(PromptChecker):
         return data.endswith(self.matchStr)
 
 
-class RegexMatchPromptChecker(PromptChecker):
-    def __init__(self, matchRE, flags=None, useRecent=False):
+class ExactStartsWithPromptChecker(PromptChecker):
+    """ Used to check IO to see if it starts with the given
+    string. 
+    """
+
+    def __init__(self, matchStr, useRecent = False):
         PromptChecker.__init__(
                                self,
-                               checkFunc=self.checkFunc,
+                               useRecent = useRecent,
+                               )
+        self.matchStr = matchStr
+
+
+    def checkFunc(self, data):
+        return data.startswith(self.matchStr)
+
+
+class RegexMatchPromptChecker(PromptChecker):
+    """ Used to check IO to see if it matches the given regex 
+    """
+    def __init__(self, matchRE, flags = None, useRecent = False):
+        """
+        matchRE
+        """
+        PromptChecker.__init__(
+                               self,
                                useRecent=useRecent,
                                )
         if hasattr(matchRE, 'match'):
@@ -81,25 +98,7 @@ class RegexMatchPromptChecker(PromptChecker):
 
 
 class RegexFindAllPromptChecker(RegexMatchPromptChecker):
+    """ Used to check IO to see if it matches the given regex 
+    """
     def checkFunc(self, data):
         return self.matchRE.findall(data)
-
-
-class PromptContextManager(object):
-    """
-    """
-
-    def __init__(self, onMatchF, prompt):
-        self.prompt = prompt
-        self.onMatchF = onMatchF
-
-    def __enter__(self):
-        self.save_shell = env.shell
-        self.save_current_prompts = env.prompt_responses.keys()
-        env.prompt_responses[self] = self.prompt
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        if self not in self.save_current_prompts:
-            del env.prompt_responses[self]
-        else:
-            pass

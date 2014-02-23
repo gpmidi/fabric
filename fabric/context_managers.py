@@ -600,3 +600,23 @@ warn_only.__doc__ = """
         `~fabric.context_managers.settings`,
         `~fabric.context_managers.quiet`
 """
+
+
+class PromptContextManager(object):
+    """ 
+    """
+
+    def __init__(self, onMatchF, prompt):
+        self.prompt = prompt
+        self.onMatchF = onMatchF
+
+    def __enter__(self):
+        self.save_shell = env.shell
+        self.save_current_prompts = env.prompt_responses.keys()
+        env.prompt_responses[self] = self.prompt
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self not in self.save_current_prompts:
+            del env.prompt_responses[self]
+        else:
+            pass
