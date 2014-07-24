@@ -17,3 +17,5 @@ TAGS
 tox.ini
 .idea/
 sites/*/_build
+.project
+.pydevproject
